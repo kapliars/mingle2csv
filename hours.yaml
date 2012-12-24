@@ -1,0 +1,22 @@
+---
+queries:
+    - prefix: P1 hours remaining - 
+      query: Select sum('hours remaining') %s WHERE story in (select number where type=story and sprint=number 768 and priority='p1-must have')
+    - prefix: P2 hours remaining - 
+      query: Select sum('hours remaining') %s WHERE story in (select number where type=story and sprint=number 768 and priority='p2-need to have')
+    - prefix: P3 hours remaining - 
+      query: Select sum('hours remaining') %s WHERE story in (select number where type=story and sprint=number 768 and priority='p3-nice to have')
+    - prefix: Total hours remaining - 
+      query: Select sum('hours remaining') %s WHERE story in (select number where type=story and sprint=number 768)
+
+
+dates:
+    - 18-dec-2012
+    - 19-dec-2012
+    - 20-dec-2012
+    - 21-dec-2012
+    - 24-dec-2012
+    - 25-dec-2012
+    - 26-dec-2012
+    - 27-dec-2012
+

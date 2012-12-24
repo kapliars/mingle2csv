@@ -7,7 +7,7 @@ from urllib import urlencode
 import xml.etree.ElementTree as ET
 import logging
 _log = logging.getLogger(__name__)
-
+import copy
 
 def __config_logging(verbosity):
     level = {0: 'WARN', 1: 'INFO', 2:'DEBUG', None: None}[verbosity] or 'WARN'    
@@ -48,13 +48,27 @@ class MingleApi(object):
         self.query_url = "%s/cards/execute_mql.xml" % self.base_url
 
     def send_query(self, mql):
+        _log.debug("Send query >>%s<<", mql)
         response, content = self.carrier.request(self.query_url, "POST", body=urlencode({'mql': mql}))
         if response.status != 200:
             _log.debug("Response %s:\n--------\n%s\n----", response, content)
         return QueryResult(content)
 
+    def historical_queries(self, queries, dates):
+        results = QueryResult()
+        for date in dates:
+            result = QueryResult()
+            for query in queries:
+                result.merge(self.send_query(query['query'] % (" AS OF '" + date + "'")), query['prefix'])
+            results.union(result, rownum=date)
+        return results
+
+
 class QueryResult(object):
-    def __init__(self, xml):
+    def __init__(self, xml=None):
+        if not xml:
+            self.rows = []
+            return
         root = ET.fromstring(xml)
         rows = []
         for item in root:
@@ -65,13 +79,43 @@ class QueryResult(object):
             rows.append(row)
         self.rows = rows
 
-    def _to_csv(self):
-        result = [row.values() for row in self.rows]
-        result.insert(0, self.rows[0].keys())
+    def merge(self, other, prefix=""):
+    	""" Merge this query result with other, providing results of double width """
+        if len(self.rows) > 1 or len(other.rows) > 1:
+            raise Exception("Only one line results may be merged")
+        t = dict([(prefix + k, v) for (k,v) in other.rows[0].items()])
+ 
+        if len(self.rows) == 0:
+            if len(other.rows) == 0:
+                return
+            self.rows.append(t)
+        else:
+           self.rows[0].update(t)
+
+    def union(self, other, rownum=None):
+        """ Add rows of other to self """
+        r = copy.deepcopy(other.rows)
+        if rownum:
+            for a in r:
+                _log.debug("R is %s", r)
+                a['rownum'] = rownum
+        self.rows.extend(r)
+            
+
+    def to_dict(self):
+        result = [self.rows[0].keys()]
+        result.extend([[row[k] for k in result[0]] for row in self.rows])
         return result 
              
     def to_csv(self):
-        return "\n".join( [",".join([str(x) for x in y]) for y in self._to_csv()])
+        return "\n".join( [",".join([str(x) for x in y]) for y in self.to_dict()])
+
+
+def history_query(url, is_secure, username, password, project, queries, dates):
+    """ aply same query to a set of historical dates, render results in table """ 
+    _log.debug("queries %s, dates %s", queries, dates)
+    mingle = MingleApi(url, is_secure, username, password, project)
+    return mingle.historical_queries(queries, dates)
 
 def execute_mql(url, is_secure, username, password, project, query):
     mingle = MingleApi(url, is_secure, username, password, project)
@@ -83,17 +127,46 @@ if __name__ == "__main__":
     parser.add_argument('-u', dest='username', help='username')
     parser.add_argument('-P', dest='password', help='password')
     parser.add_argument('-l', dest='url', help='url')
-    parser.add_argument('-s', dest='is_secure', action='store_const', const=True, default=False)
+    parser.add_argument('-s', dest='is_secure', action='store_true')
     parser.add_argument('-p', dest='project', help='project name')
     parser.add_argument('-o', dest='output', help='output file')
     parser.add_argument('-v', dest="verbosity", action='count')
-    parser.add_argument('query')
+    parser.add_argument('-d', dest="dates", action='append')
+    parser.add_argument('-y', dest='query', default=None)
+    parser.add_argument('--qf', dest='query_file', default=None)
+
     
     options = parser.parse_args()
     
     __config_logging(options.verbosity)
+    _log.debug(options)
 
-    csv = execute_mql(options.url, options.is_secure, options.username, options.password, options.project, options.query).to_csv()
+    #TODO: separate lib and two tools
+    csv = None
+    if options.dates or options.query_file:
+        queries = []
+        dates = options.dates and [date for date in options.dates] or []
+
+        if options.query_file:
+            import yaml
+            with open(options.query_file) as f:
+                config = yaml.load(f)
+
+            queries.extend(config['queries'])
+            dates.extend(config['dates'])
+
+        _log.debug("Queries: %s, Dates %s", queries, options.dates)
+        csv = history_query(options.url, 
+                            options.is_secure, 
+                            options.username, 
+                            options.password, 
+                            options.project, 
+                            queries, 
+                            dates).to_csv()
+    else:
+        csv = execute_mql(options.url, options.is_secure, options.username, 
+                          options.password, options.project, options.query).to_csv()
+
     if options.output:
         _log.debug("CSV is %s, type %s", csv, type(csv))
         with open(options.output, 'w') as out:
